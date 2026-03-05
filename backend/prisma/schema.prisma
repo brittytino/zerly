@@ -1,0 +1,207 @@
+// Zerly AI — Prisma Database Schema
+// Engine: Neon PostgreSQL (serverless) with PgBouncer connection pooling
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // For runtime queries via PgBouncer (Neon pooled connection)
+  url       = env("DATABASE_URL")
+  // For migrations we need a direct (non-pooled) connection
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// UsageMetricType enum removed — usage is now a single row per user
+
+// ─────────────────────────────────────────────
+// Users
+// ─────────────────────────────────────────────
+
+model User {
+  id              String   @id @default(cuid())
+  githubId        String   @unique @map("github_id")
+  email           String?  @unique
+  name            String?
+  avatarUrl       String?  @map("avatar_url")
+  githubLogin     String   @map("github_login")
+
+  // Stripe customer ID — one per user
+  stripeCustomerId String? @unique @map("stripe_customer_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt      @map("updated_at")
+
+  // Relations
+  subscription  Subscription?
+  usageMetric   UsageMetric?
+  refreshTokens RefreshToken[]
+  teamMembers   TeamMember[]
+  ownedTeams    Team[]        @relation("TeamOwner")
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// Subscriptions — one per user (personal) or team
+// ─────────────────────────────────────────────
+
+model Subscription {
+  id                    String             @id @default(cuid())
+  userId                String             @unique @map("user_id")
+  plan                  Plan               @default(FREE)
+  status                SubscriptionStatus @default(ACTIVE)
+
+  // Stripe identifiers
+  stripeSubscriptionId  String?  @unique @map("stripe_subscription_id")
+  stripePriceId         String?  @map("stripe_price_id")
+
+  // Billing cycle
+  currentPeriodStart    DateTime? @map("current_period_start")
+  currentPeriodEnd      DateTime? @map("current_period_end")
+
+  // Team seats (relevant for TEAM plan)
+  seats                 Int  @default(1)
+
+  // Enterprise: self-hosted flag and SSO domain
+  selfHosted            Boolean  @default(false) @map("self_hosted")
+  ssoDomain             String?  @map("sso_domain")
+
+  cancelAtPeriodEnd     Boolean  @default(false) @map("cancel_at_period_end")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt      @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// ─────────────────────────────────────────────
+// Usage Metrics — one row per user, auto-reset via service layer
+// ─────────────────────────────────────────────
+
+model UsageMetric {
+  id   String @id @default(cuid())
+  userId String @unique @map("user_id")
+
+  // Monthly counters (reset each calendar month)
+  scansThisMonth    Int      @default(0) @map("scans_this_month")
+  lastResetMonthly  DateTime @default(now()) @map("last_reset_monthly")
+
+  // Daily counters (reset each calendar day UTC)
+  explanationsToday Int      @default(0) @map("explanations_today")
+  chatToday         Int      @default(0) @map("chat_today")
+  lastResetDaily    DateTime @default(now()) @map("last_reset_daily")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("usage_metrics")
+}
+
+// ─────────────────────────────────────────────
+// Refresh Tokens — stored server-side for rotation
+// ─────────────────────────────────────────────
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────
+// Teams — maps to TEAM / ENTERPRISE plans
+// ─────────────────────────────────────────────
+
+model Team {
+  id               String  @id @default(cuid())
+  name             String
+  slug             String  @unique
+  ownerId          String  @map("owner_id")
+
+  stripeCustomerId String? @unique @map("stripe_customer_id")
+
+  // Shared dashboard settings (stored as JSON for flexibility)
+  settings         Json    @default("{}")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt      @map("updated_at")
+
+  owner   User         @relation("TeamOwner", fields: [ownerId], references: [id])
+  members TeamMember[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String   @map("team_id")
+  userId   String   @map("user_id")
+  role     TeamRole @default(MEMBER)
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+// ─────────────────────────────────────────────
+// Audit Logs — enterprise compliance
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  action    String
+  resource  String?
+  metadata  Json     @default("{}")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}

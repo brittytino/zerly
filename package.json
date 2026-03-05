@@ -73,6 +73,34 @@
       {
         "command": "zerly.chat",
         "title": "Zerly: Chat with Zerly"
+      },
+      {
+        "command": "zerly.login",
+        "title": "Zerly: Sign in with GitHub"
+      },
+      {
+        "command": "zerly.logout",
+        "title": "Zerly: Sign Out"
+      },
+      {
+        "command": "zerly.upgrade",
+        "title": "Zerly: Upgrade Plan"
+      },
+      {
+        "command": "zerly.manageBilling",
+        "title": "Zerly: Manage Billing"
+      },
+      {
+        "command": "zerly.architectureHistory",
+        "title": "Zerly: Architecture Change History"
+      },
+      {
+        "command": "zerly.teamDashboard",
+        "title": "Zerly: Team Dashboard"
+      },
+      {
+        "command": "zerly.refresh",
+        "title": "Zerly: Refresh"
       }
     ],
     "menus": {
@@ -139,9 +167,15 @@
           "type": "string",
           "default": "",
           "description": "Custom OpenAI-compatible API endpoint (e.g. http://localhost:11434/v1). Only used when provider is 'custom'."
+        },
+        "zerly.apiUrl": {
+          "type": "string",
+          "default": "https://api.zerlyai.dev",
+          "description": "Zerly backend API URL. Change only for self-hosted Enterprise deployments."
         }
       }
-    }
+    },
+    "uriHandler": true
   },
   "scripts": {
     "vscode:prepublish": "npm run build:all",
@@ -160,6 +194,7 @@
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.44",
+    "axios": "^1.6.8",
     "mermaid": "^11.0.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"
