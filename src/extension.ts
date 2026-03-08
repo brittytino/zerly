@@ -58,6 +58,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('zerly.connectZerly', async () => {
+      await vscode.env.openExternal(vscode.Uri.parse('https://zerly.tinobritty.me/connect'));
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('zerly.logout', async () => {
       await auth.logout();
       subManager.invalidateCache();

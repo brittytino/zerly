@@ -7,6 +7,10 @@ import { AIService } from './aiService';
 
 const CACHE_KEY = 'zerly.cachedScanData';
 const CACHE_TIMESTAMP_KEY = 'zerly.cachedScanTimestamp';
+const ARCH_CACHE_KEY = 'zerly.cachedArchitecture';
+const ARCH_CACHE_TIMESTAMP_KEY = 'zerly.cachedArchitectureTimestamp';
+const RISK_CACHE_KEY = 'zerly.cachedRisk';
+const RISK_CACHE_TIMESTAMP_KEY = 'zerly.cachedRiskTimestamp';
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
@@ -63,9 +67,8 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
 
     switch (message.command) {
       case 'getCachedScan': {
-        const cached = this._context.workspaceState.get<any>(CACHE_KEY);
-        const timestamp = this._context.workspaceState.get<number>(CACHE_TIMESTAMP_KEY);
-        if (cached && timestamp && Date.now() - timestamp < CACHE_TTL_MS) {
+        const cached = this._getCachedData<any>(CACHE_KEY, CACHE_TIMESTAMP_KEY);
+        if (cached) {
           this.postMessage({ command: 'cachedScanData', data: cached });
         }
         break;
@@ -77,39 +80,14 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
           return;
         }
 
-        // Check cache unless forceRefresh
-        if (!message.forceRefresh) {
-          const cached = this._context.workspaceState.get<any>(CACHE_KEY);
-          const timestamp = this._context.workspaceState.get<number>(CACHE_TIMESTAMP_KEY);
-          if (cached && timestamp && Date.now() - timestamp < CACHE_TTL_MS) {
-            this.postMessage({ command: 'scanComplete', data: cached, isCached: true });
-            return;
-          }
-        }
-
         this.postMessage({ command: 'loading', feature: 'analyze' });
         try {
-          const scanResult = await this._scanner.scan(rootPath);
-          const graph = this._depGraph.build(scanResult);
-          
-          // Always try AI summary — the service has built-in API key fallback
-          let aiSummary = '';
-          try {
-            aiSummary = await this._aiService.summarizeProject(scanResult);
-          } catch {
-            aiSummary = '';
-          }
-
-          const data = { scanResult, graph, aiSummary };
-
-          // Store in cache
-          await this._context.workspaceState.update(CACHE_KEY, data);
-          await this._context.workspaceState.update(CACHE_TIMESTAMP_KEY, Date.now());
+          const scanData = await this._getScanData(rootPath, message.forceRefresh === true);
 
           this.postMessage({
             command: 'scanComplete',
-            data,
-            isCached: false,
+            data: scanData,
+            isCached: scanData.fromCache,
           });
         } catch (err: any) {
           this.postMessage({ command: 'error', message: err.message });
@@ -119,14 +97,26 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
 
       case 'architectureMap': {
         if (!rootPath) return;
+        if (!vscode.workspace.getConfiguration('zerly').get<boolean>('enableArchitectureMap')) {
+          this.postMessage({ command: 'error', message: 'Architecture Map is disabled in settings.' });
+          return;
+        }
+        const cached = this._getCachedData<any>(ARCH_CACHE_KEY, ARCH_CACHE_TIMESTAMP_KEY);
+        if (cached) {
+          this.postMessage({ command: 'architectureResult', data: cached });
+          return;
+        }
         this.postMessage({ command: 'loading', feature: 'architecture' });
         try {
-          const scanResult = await this._scanner.scan(rootPath);
-          const graph = this._depGraph.build(scanResult);
+          const scanData = await this._getScanData(rootPath, false);
+          const graph = scanData.graph || this._depGraph.build(scanData.scanResult);
           const mermaidDiagram = this._depGraph.toMermaid(graph);
+          const data = { graph, mermaidDiagram };
+          await this._context.workspaceState.update(ARCH_CACHE_KEY, data);
+          await this._context.workspaceState.update(ARCH_CACHE_TIMESTAMP_KEY, Date.now());
           this.postMessage({
             command: 'architectureResult',
-            data: { graph, mermaidDiagram },
+            data,
           });
         } catch (err: any) {
           this.postMessage({ command: 'error', message: err.message });
@@ -136,13 +126,25 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
 
       case 'riskScan': {
         if (!rootPath) return;
+        if (!vscode.workspace.getConfiguration('zerly').get<boolean>('enableRiskScanner')) {
+          this.postMessage({ command: 'error', message: 'Risk Scanner is disabled in settings.' });
+          return;
+        }
+        const cached = this._getCachedData<any>(RISK_CACHE_KEY, RISK_CACHE_TIMESTAMP_KEY);
+        if (cached) {
+          this.postMessage({ command: 'riskResult', data: cached });
+          return;
+        }
         this.postMessage({ command: 'loading', feature: 'risk' });
         try {
-          const scanResult = await this._scanner.scan(rootPath);
-          const risks = this._riskAnalyzer.analyze(scanResult);
+          const scanData = await this._getScanData(rootPath, false);
+          const risks = this._riskAnalyzer.analyze(scanData.scanResult);
+          const data = { risks };
+          await this._context.workspaceState.update(RISK_CACHE_KEY, data);
+          await this._context.workspaceState.update(RISK_CACHE_TIMESTAMP_KEY, Date.now());
           this.postMessage({
             command: 'riskResult',
-            data: { risks },
+            data,
           });
         } catch (err: any) {
           this.postMessage({ command: 'error', message: err.message });
@@ -154,8 +156,8 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
         if (!rootPath) return;
         this.postMessage({ command: 'loading', feature: 'featureFlow' });
         try {
-          const scanResult = await this._scanner.scan(rootPath);
-          const flow = this._flowAnalyzer.analyzeFlow(scanResult, message.query || '');
+          const scanData = await this._getScanData(rootPath, false);
+          const flow = this._flowAnalyzer.analyzeFlow(scanData.scanResult, message.query || '');
           this.postMessage({
             command: 'featureFlowResult',
             data: { flow, query: message.query },
@@ -187,11 +189,11 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
         if (!rootPath) return;
         this.postMessage({ command: 'loading', feature: 'learning' });
         try {
-          const scanResult = await this._scanner.scan(rootPath);
-          const roadmap = await this._aiService.generateLearningRoadmap(scanResult);
+          const scanData = await this._getScanData(rootPath, false);
+          const roadmap = await this._aiService.generateLearningRoadmap(scanData.scanResult);
           this.postMessage({
             command: 'learningResult',
-            data: { roadmap, scanResult },
+            data: { roadmap, scanResult: scanData.scanResult },
           });
         } catch (err: any) {
           this.postMessage({ command: 'error', message: err.message });
@@ -204,7 +206,8 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
         try {
           let scanResult = null;
           if (rootPath) {
-            scanResult = await this._scanner.scan(rootPath);
+            const scanData = await this._getScanData(rootPath, false);
+            scanResult = scanData.scanResult;
           }
           const reply = await this._aiService.chat(message.userMessage, scanResult);
           this.postMessage({
@@ -227,17 +230,36 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
 
       case 'setApiKey': {
         const key = await vscode.window.showInputBox({
-          prompt: 'Enter your API key (OpenRouter, OpenAI-compatible, or any LLM provider)',
+          prompt: 'Enter your Zerly API key from zerly.tinobritty.me',
           password: true,
-          placeHolder: 'sk-or-... or sk-...',
+          placeHolder: 'zerly-...',
         });
         if (key) {
           await vscode.workspace
             .getConfiguration('zerly')
-            .update('openRouterApiKey', key, vscode.ConfigurationTarget.Global);
+            .update('zerlyApiKey', key, vscode.ConfigurationTarget.Global);
           this.postMessage({ command: 'apiKeySet', success: true });
           vscode.window.showInformationMessage('Zerly: API key saved! AI features are ready.');
         }
+        break;
+      }
+
+      case 'connectZerly': {
+        await vscode.env.openExternal(vscode.Uri.parse('https://zerly.tinobritty.me/connect'));
+        break;
+      }
+
+      case 'pasteApiKey': {
+        const clipboardText = (await vscode.env.clipboard.readText()).trim();
+        if (!clipboardText) {
+          vscode.window.showWarningMessage('Zerly: Clipboard is empty. Copy your API key and try again.');
+          break;
+        }
+        await vscode.workspace
+          .getConfiguration('zerly')
+          .update('zerlyApiKey', clipboardText, vscode.ConfigurationTarget.Global);
+        this.postMessage({ command: 'apiKeySet', success: true });
+        vscode.window.showInformationMessage('Zerly: API key saved from clipboard.');
         break;
       }
 
@@ -245,11 +267,53 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
         const hasKey = this._aiService.getApiKey().length > 0;
         this.postMessage({
           command: 'apiStatus',
-          data: { hasKey, isDefault: !vscode.workspace.getConfiguration('zerly').get<string>('openRouterApiKey') },
+          data: { hasKey, isDefault: !vscode.workspace.getConfiguration('zerly').get<string>('zerlyApiKey') },
         });
         break;
       }
     }
+  }
+
+  private _isCacheValid(timestamp?: number): boolean {
+    return !!timestamp && Date.now() - timestamp < CACHE_TTL_MS;
+  }
+
+  private _getCachedData<T>(key: string, tsKey: string): T | null {
+    const cached = this._context.workspaceState.get<T>(key);
+    const timestamp = this._context.workspaceState.get<number>(tsKey);
+    if (cached && this._isCacheValid(timestamp)) {
+      return cached;
+    }
+    return null;
+  }
+
+  private async _getScanData(rootPath: string, forceRefresh: boolean): Promise<any> {
+    if (!forceRefresh) {
+      const cached = this._getCachedData<any>(CACHE_KEY, CACHE_TIMESTAMP_KEY);
+      if (cached) {
+        return { ...cached, fromCache: true };
+      }
+    } else {
+      await this._context.workspaceState.update(ARCH_CACHE_KEY, undefined);
+      await this._context.workspaceState.update(ARCH_CACHE_TIMESTAMP_KEY, undefined);
+      await this._context.workspaceState.update(RISK_CACHE_KEY, undefined);
+      await this._context.workspaceState.update(RISK_CACHE_TIMESTAMP_KEY, undefined);
+    }
+
+    const scanResult = await this._scanner.scan(rootPath);
+    const graph = this._depGraph.build(scanResult);
+
+    let aiSummary = '';
+    try {
+      aiSummary = await this._aiService.summarizeProject(scanResult);
+    } catch {
+      aiSummary = '';
+    }
+
+    const data = { scanResult, graph, aiSummary };
+    await this._context.workspaceState.update(CACHE_KEY, data);
+    await this._context.workspaceState.update(CACHE_TIMESTAMP_KEY, Date.now());
+    return { ...data, fromCache: false };
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -269,11 +333,11 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
-    style-src ${webview.cspSource} 'unsafe-inline';
+    style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com;
     script-src 'nonce-${nonce}';
-    font-src ${webview.cspSource};
+    font-src ${webview.cspSource} https://fonts.gstatic.com;
     img-src ${webview.cspSource} https: data:;
-    connect-src https://openrouter.ai;
+    connect-src https://zerly.tinobritty.me;
   ">
   <link rel="stylesheet" href="${styleUri}">
   <title>Zerly AI</title>

@@ -27,6 +27,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [loadingFeature, setLoadingFeature] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null);
   const [scanData, setScanData] = useState<any>(null);
   const [scanIsCached, setScanIsCached] = useState(false);
   const [architectureData, setArchitectureData] = useState<any>(null);
@@ -120,14 +121,20 @@ export function App() {
 
       case 'apiKeySet':
         setError(null);
+        setApiKeyConfigured(true);
+        break;
+
+      case 'apiStatus':
+        setApiKeyConfigured(message.data?.hasKey === true);
         break;
     }
   }, []);
 
   useEffect(() => {
     window.addEventListener('message', handleMessage);
-    // Request cached data on mount
+    // Request cached data and API key status on mount
     vscode.postMessage({ command: 'getCachedScan' });
+    vscode.postMessage({ command: 'getApiStatus' });
     return () => window.removeEventListener('message', handleMessage);
   }, [handleMessage]);
 
@@ -204,6 +211,9 @@ export function App() {
             onNavigate={navigateTo}
             onAnalyze={() => sendMessage('analyzeProject')}
             onSetApiKey={() => sendMessage('setApiKey')}
+            onConnectZerly={() => sendMessage('connectZerly')}
+            onPasteApiKey={() => sendMessage('pasteApiKey')}
+            apiKeyConfigured={apiKeyConfigured}
           />
         );
     }

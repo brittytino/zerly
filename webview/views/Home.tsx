@@ -4,6 +4,9 @@ interface HomeProps {
   onNavigate: (view: string) => void;
   onAnalyze: () => void;
   onSetApiKey: () => void;
+  onConnectZerly: () => void;
+  onPasteApiKey: () => void;
+  apiKeyConfigured: boolean | null;
 }
 
 const features = [
@@ -51,7 +54,14 @@ const features = [
   },
 ];
 
-export function Home({ onNavigate, onAnalyze, onSetApiKey }: HomeProps) {
+export function Home({
+  onNavigate,
+  onAnalyze,
+  onSetApiKey,
+  onConnectZerly,
+  onPasteApiKey,
+  apiKeyConfigured,
+}: HomeProps) {
   const quickOpenOptions = useMemo(
     () => [
       { id: "", label: "Quick Open" },
@@ -78,6 +88,17 @@ export function Home({ onNavigate, onAnalyze, onSetApiKey }: HomeProps) {
 
   return (
     <div className="home-view">
+      {apiKeyConfigured === false && (
+        <div className="api-key-notice">
+          <div className="api-key-notice-body">
+            <span className="api-key-notice-title">Connect your Zerly account to activate AI features.</span>
+          </div>
+          <div className="api-key-notice-actions">
+            <button className="api-key-notice-btn" onClick={onConnectZerly}>Connect Zerly</button>
+            <button className="api-key-notice-btn ghost" onClick={onPasteApiKey}>Paste key</button>
+          </div>
+        </div>
+      )}
       <div className="quick-actions">
         <button className="quick-action-btn primary" onClick={onAnalyze} title="Analyze Project (Ctrl+Alt+A)">
           <i className="codicon codicon-search" />
@@ -87,7 +108,7 @@ export function Home({ onNavigate, onAnalyze, onSetApiKey }: HomeProps) {
           <i className="codicon codicon-comment-discussion" />
           <span>Chat</span>
         </button>
-        <button className="icon-btn" onClick={onSetApiKey} title="Configure API Key">
+        <button className="icon-btn" onClick={onSetApiKey} title="Configure Zerly API Key">
           <i className="codicon codicon-key" />
         </button>
       </div>

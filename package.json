@@ -79,6 +79,10 @@
         "title": "Zerly: Sign in with GitHub"
       },
       {
+        "command": "zerly.connectZerly",
+        "title": "Zerly: Connect Zerly Account"
+      },
+      {
         "command": "zerly.logout",
         "title": "Zerly: Sign Out"
       },
@@ -115,63 +119,37 @@
     "configuration": {
       "title": "Zerly AI",
       "properties": {
-        "zerly.openRouterApiKey": {
+        "zerly.zerlyApiKey": {
           "type": "string",
           "default": "",
-          "description": "Your OpenRouter API key for AI-powered analysis.",
-          "markdownDescription": "Your [OpenRouter](https://openrouter.ai/) API key for AI-powered code analysis."
+          "description": "Your Zerly API key for AI-powered analysis.",
+          "markdownDescription": "Your Zerly API key from [zerly.tinobritty.me](https://zerly.tinobritty.me). Required for all AI features."
         },
-        "zerly.aiModel": {
+        "zerly.customModelApiKey": {
           "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "qwen/qwen3-coder:free",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "liquid/lfm-2.5-1.2b-thinking:free",
-            "qwen/qwen3-4b:free",
-            "nvidia/llama-nemotron-embed-vl-1b-v2:free",
-            "stepfun/step-3.5-flash:free",
-            "arcee-ai/trinity-large-preview:free",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
-            "qwen/qwen3-vl-235b-a22b-thinking"
-          ],
-          "enumDescriptions": [
-            "Auto — Zerly picks the best free model per task (recommended)",
-            "Qwen3 Coder — Best for code explanation and review",
-            "Qwen3 Next 80B — Large model for complex analysis",
-            "Liquid LFM 2.5 1.2B Thinking — Lightweight, fast reasoning",
-            "Qwen3 4B — Small, fast general use",
-            "NVIDIA LLaMA Nemotron Embed VL 1B — NVIDIA model",
-            "StepFun Step 3.5 Flash — Fast responses",
-            "Arcee Trinity Large — Large preview model",
-            "NVIDIA Nemotron Nano 30B — NVIDIA medium model",
-            "Qwen3 VL 235B Thinking — Largest model for deep architecture reasoning"
-          ],
-          "description": "AI model override. 'auto' lets Zerly pick the best free model per task."
+          "default": "",
+          "description": "Optional: API key for a custom model provider. When set, overrides the default Zerly model.",
+          "markdownDescription": "Optional: API key for your own model provider. When set, Zerly will use this instead of the default `zerly/zerlino-32b` model."
         },
-        "zerly.customApiProvider": {
+        "zerly.customModel": {
           "type": "string",
-          "default": "openrouter",
-          "enum": [
-            "openrouter",
-            "custom"
-          ],
-          "enumDescriptions": [
-            "OpenRouter — Free AI models (default, no setup needed)",
-            "Custom — Use your own OpenAI-compatible API endpoint"
-          ],
-          "description": "Choose your LLM API provider."
+          "default": "",
+          "description": "Custom model name to use when a Custom Model API Key is configured."
         },
         "zerly.customApiEndpoint": {
           "type": "string",
           "default": "",
-          "description": "Custom OpenAI-compatible API endpoint (e.g. http://localhost:11434/v1). Only used when provider is 'custom'."
+          "description": "Custom API endpoint. Only used when Custom Model API Key is set."
         },
-        "zerly.apiUrl": {
-          "type": "string",
-          "default": "https://api.zerlyai.dev",
-          "description": "Zerly backend API URL. Change only for self-hosted Enterprise deployments."
+        "zerly.enableRiskScanner": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Risk Scanner to detect fragile and high-complexity modules."
+        },
+        "zerly.enableArchitectureMap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Architecture Map to generate visual dependency diagrams."
         }
       }
     },
@@ -194,7 +172,7 @@
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.44",
-    "axios": "^1.6.8",
+    "axios": "^1.13.6",
     "mermaid": "^11.0.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"

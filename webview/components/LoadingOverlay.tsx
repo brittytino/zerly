@@ -19,17 +19,8 @@ export function LoadingOverlay({ feature }: LoadingOverlayProps) {
 
   return (
     <div className="loading-overlay">
-      <div className="loading-card glass-card">
-        <div className="loading-spinner">
-          <div className="spinner-ring" />
-        </div>
-        <p className="loading-message">{message}</p>
-        <div className="loading-dots">
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
-        </div>
-      </div>
+      <div className="loading-spinner-ring" />
+      <span className="loading-text">{message}</span>
     </div>
   );
 }
