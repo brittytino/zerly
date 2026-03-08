@@ -8,7 +8,7 @@ import { AuthManager, Plan } from "./authManager";
 
 const BACKEND_URL =
   vscode.workspace.getConfiguration("zerly").get<string>("apiUrl") ??
-  "http://localhost:3000";
+  "https://zerly.tinobritty.me";
 
 // Feature keys that map to the backend planFeatures() object
 export type FeatureKey =
@@ -262,7 +262,7 @@ export class SubscriptionManager {
     if (action === "Upgrade Now" && required !== "FREE") {
       await this.startUpgrade(required as "PRO" | "TEAM" | "ENTERPRISE");
     } else if (action === "View Plans") {
-      await vscode.env.openExternal(vscode.Uri.parse("https://zerlyai.dev/pricing"));
+      await vscode.env.openExternal(vscode.Uri.parse("https://zerly.tinobritty.me/pricing"));
     }
   }
 }

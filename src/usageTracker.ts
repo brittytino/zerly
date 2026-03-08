@@ -31,7 +31,7 @@ interface LocalCounter {
 
 const BACKEND_URL =
   vscode.workspace.getConfiguration("zerly").get<string>("apiUrl") ??
-  "http://localhost:3000";
+  "https://zerly.tinobritty.me";
 
 export class UsageTracker {
   private static instance: UsageTracker;
@@ -196,7 +196,7 @@ export class UsageTracker {
       await subManager.startUpgrade("PRO");
     } else if (action === "View All Plans") {
       await vscode.env.openExternal(
-        vscode.Uri.parse("https://zerlyai.dev/pricing")
+        vscode.Uri.parse("https://zerly.tinobritty.me/pricing")
       );
     }
   }

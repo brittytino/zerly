@@ -9,6 +9,8 @@ import { AuthManager } from './authManager';
 import { SubscriptionManager } from './subscriptionManager';
 import { UsageTracker } from './usageTracker';
 import { ZerlyKeyManager, getLogBuffer, zerlyLog } from './zerlyKeyManager';
+import { ProviderKeyManager } from './providerKeyManager';
+import { RequestRouter } from './requestRouter';
 
 let sidebarProvider: ZerlySidebarProvider;
 
@@ -37,9 +39,20 @@ export async function activate(context: vscode.ExtensionContext) {
   const depGraph = new DependencyGraph();
   const riskAnalyzer = new RiskAnalyzer();
   const flowAnalyzer = new FlowAnalyzer();
+  // ── Provider key manager (BYOK) + Request router ─────────────────────────
+  const providerManager = ProviderKeyManager.getInstance(context);
+  await providerManager.initialize();
+  context.subscriptions.push({ dispose: () => providerManager.dispose() });
+
+  const requestRouter = new RequestRouter();
+  requestRouter.setKeyManager(keyManager);
+  requestRouter.setProviderManager(providerManager);
+
   const aiService = new AIService();
   aiService.setExtensionPath(context.extensionUri.fsPath);
   aiService.setKeyManager(keyManager);
+  aiService.setProviderManager(providerManager);
+  aiService.setRequestRouter(requestRouter);
 
   sidebarProvider = new ZerlySidebarProvider(
     context.extensionUri,
@@ -51,6 +64,7 @@ export async function activate(context: vscode.ExtensionContext) {
     aiService,
     keyManager
   );
+  sidebarProvider.setProviderManager(providerManager);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('zerly.mainView', sidebarProvider, {
@@ -99,7 +113,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const lastReq = aiService.getLastRequestInfo();
       const lastReqStr = lastReq
-        ? `${lastReq.requestId.slice(0, 8)} HTTP:${lastReq.status ?? '?'} @ ${new Date(lastReq.ts).toISOString().slice(11, 23)}`
+        ? `${lastReq.requestId.slice(0, 8)} HTTP:${lastReq.status ?? '?'} route:${lastReq.routeUsed ?? '?'} @ ${new Date(lastReq.ts).toISOString().slice(11, 23)}`
         : '(none)';
 
       const lastAuthTs = auth.getLastAuthUriTimestamp();
@@ -107,11 +121,21 @@ export async function activate(context: vscode.ExtensionContext) {
         ? new Date(lastAuthTs).toISOString()
         : '(never)';
 
+      const cfg = providerManager.getConfig();
+      const providerLines = ['openai', 'anthropic', 'gemini'].map(
+        p => `  ${p.padEnd(10)}: ${providerManager.hasKey(p as any) ? `✓ ${providerManager.maskedKey(p as any)}` : '✗ (not set)'}`
+      ).join('\n');
+
       const diagnosticInfo = [
         `─── Zerly AI Diagnostics ───`,
         `Key present      : ${keyManager.hasKey()}`,
         `Key (masked)     : ${keyManager.maskedKey()}`,
         `Key version      : ${keyManager.keyVersion}`,
+        `Route mode       : ${cfg.routeMode}`,
+        `Active provider  : ${cfg.activeProvider}`,
+        `Config version   : ${providerManager.configVersion}`,
+        `Provider keys    :`,
+        providerLines,
         `In-flight count  : ${aiService.getInflightCount()}`,
         `Last request     : ${lastReqStr}`,
         `Listeners (key)  : ${sidebarProvider.getListenerCount()}`,
@@ -137,7 +161,83 @@ export async function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('zerly.connectZerly', async () => {
-      await vscode.env.openExternal(vscode.Uri.parse('https://zerly.tinobritty.me/connect'));
+      const connectUrl = `https://zerly.tinobritty.me/connect?autoConnect=1&extensionId=${context.extension.id}&setupProviders=1`;
+      await vscode.env.openExternal(vscode.Uri.parse(connectUrl));
+    })
+  );
+
+  // ── Setup AI Providers command (BYOK) ─────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('zerly.setupProviders', async () => {
+      const providers = ['OpenAI', 'Anthropic', 'Gemini'] as const;
+      const providerMap: Record<string, 'openai' | 'anthropic' | 'gemini'> = {
+        OpenAI: 'openai', Anthropic: 'anthropic', Gemini: 'gemini',
+      };
+      const items = providers.map(p => {
+        const key = providerMap[p];
+        const connected = providerManager.hasKey(key);
+        return {
+          label: `$(${connected ? 'check' : 'circle-slash'}) ${p}`,
+          description: connected ? providerManager.maskedKey(key) : 'Not configured',
+          detail: connected ? 'Click to update or remove' : 'Click to add API key',
+          provider: key,
+        };
+      });
+
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a provider to configure',
+        title: 'Zerly: Setup AI Providers (BYOK)',
+      });
+      if (!pick) return;
+
+      const action = await vscode.window.showQuickPick(
+        providerManager.hasKey(pick.provider)
+          ? ['Update key', 'Remove key', 'Cancel']
+          : ['Add key', 'Cancel'],
+        { placeHolder: `${pick.label.replace(/\$\([^)]+\) /, '')} — choose action` }
+      );
+      if (!action || action === 'Cancel') return;
+
+      if (action === 'Remove key') {
+        await providerManager.removeKey(pick.provider);
+        vscode.window.showInformationMessage(`Zerly: ${pick.provider} key removed.`);
+        return;
+      }
+
+      const key = await vscode.window.showInputBox({
+        prompt: `Enter your ${pick.provider} API key`,
+        password: true,
+        placeHolder: pick.provider === 'openai' ? 'sk-...' : pick.provider === 'anthropic' ? 'sk-ant-...' : 'AIza...',
+        validateInput: v => v && v.trim().length > 10 ? null : 'Key too short',
+      });
+      if (!key) return;
+
+      const result = await providerManager.setKey(pick.provider, key.trim());
+      if (result.ok) {
+        vscode.window.showInformationMessage(`Zerly: ${pick.provider} key saved. ✓`);
+        sidebarProvider.postMessage({ command: 'providerStatus', data: providerManager.getConfig() });
+      } else {
+        vscode.window.showErrorMessage(`Zerly: ${result.error}`);
+      }
+    })
+  );
+
+  // ── Paste Zerly API key command ────────────────────────────────────────────
+  context.subscriptions.push(
+    vscode.commands.registerCommand('zerly.pasteApiKey', async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Paste your Zerly API key',
+        password: true,
+        placeHolder: 'sk_zerly_...',
+        validateInput: v => v && v.trim().length > 10 ? null : 'Key too short',
+      });
+      if (!key) return;
+      const result = await keyManager.setKey(key.trim());
+      if (result.ok) {
+        vscode.window.showInformationMessage('Zerly: API key saved. Account connected! 🟣');
+      } else {
+        vscode.window.showErrorMessage(`Zerly: ${result.error}`);
+      }
     })
   );
 

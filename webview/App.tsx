@@ -28,6 +28,9 @@ export function App() {
   const [loadingFeature, setLoadingFeature] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null);
+  const [routeMode, setRouteMode] = useState<string>('zerly_default');
+  const [activeProvider, setActiveProvider] = useState<string>('openai');
+  const [providerKeys, setProviderKeys] = useState<Record<string, boolean>>({ openai: false, anthropic: false, gemini: false });
   const [scanData, setScanData] = useState<any>(null);
   const [scanIsCached, setScanIsCached] = useState(false);
   const [architectureData, setArchitectureData] = useState<any>(null);
@@ -127,6 +130,27 @@ export function App() {
       case 'apiStatus':
         setApiKeyConfigured(message.data?.hasKey === true);
         break;
+
+      case 'providerStatus': {
+        const cfg = message.data;
+        if (!cfg) break;
+        if (cfg.routeMode) setRouteMode(cfg.routeMode);
+        if (cfg.activeProvider) setActiveProvider(cfg.activeProvider);
+        // cfg.models is always present but we only need key presence state
+        // We re-use this to infer connected status via routeMode/activeProvider
+        break;
+      }
+
+      case 'clearResults':
+        setScanData(null);
+        setArchitectureData(null);
+        setRiskData(null);
+        setFlowData(null);
+        setExplainData(null);
+        setLearningData(null);
+        setChatMessages([]);
+        setCurrentView('home');
+        break;
     }
   }, []);
 
@@ -206,14 +230,17 @@ export function App() {
           />
         );
       default:
-        return (
+    return (
           <Home
             onNavigate={navigateTo}
             onAnalyze={() => sendMessage('analyzeProject')}
             onSetApiKey={() => sendMessage('setApiKey')}
             onConnectZerly={() => sendMessage('connectZerly')}
             onPasteApiKey={() => sendMessage('pasteApiKey')}
+            onSetupProviders={() => sendMessage('setupProviders')}
             apiKeyConfigured={apiKeyConfigured}
+            routeMode={routeMode}
+            activeProvider={activeProvider}
           />
         );
     }

@@ -6,7 +6,10 @@ interface HomeProps {
   onSetApiKey: () => void;
   onConnectZerly: () => void;
   onPasteApiKey: () => void;
+  onSetupProviders: () => void;
   apiKeyConfigured: boolean | null;
+  routeMode: string;
+  activeProvider: string;
 }
 
 const features = [
@@ -60,7 +63,10 @@ export function Home({
   onSetApiKey,
   onConnectZerly,
   onPasteApiKey,
+  onSetupProviders,
   apiKeyConfigured,
+  routeMode,
+  activeProvider,
 }: HomeProps) {
   const quickOpenOptions = useMemo(
     () => [
@@ -99,6 +105,16 @@ export function Home({
           </div>
         </div>
       )}
+      {apiKeyConfigured === true && routeMode !== 'zerly_default' && (
+        <div className="provider-status-bar">
+          <span className="provider-status-label">
+            {routeMode === 'provider_override' ? `✓ Using ${activeProvider}` : `✓ Auto (${activeProvider} → Zerly)`}
+          </span>
+          <button className="provider-setup-btn" onClick={onSetupProviders} title="Configure AI providers">
+            <i className="codicon codicon-settings-gear" /> Providers
+          </button>
+        </div>
+      )}
       <div className="quick-actions">
         <button className="quick-action-btn primary" onClick={onAnalyze} title="Analyze Project (Ctrl+Alt+A)">
           <i className="codicon codicon-search" />
@@ -110,6 +126,9 @@ export function Home({
         </button>
         <button className="icon-btn" onClick={onSetApiKey} title="Configure Zerly API Key">
           <i className="codicon codicon-key" />
+        </button>
+        <button className="icon-btn" onClick={onSetupProviders} title="Setup AI Providers (BYOK)">
+          <i className="codicon codicon-settings-gear" />
         </button>
       </div>
 

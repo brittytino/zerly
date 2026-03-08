@@ -5,6 +5,7 @@ import { RiskAnalyzer } from './riskAnalyzer';
 import { FlowAnalyzer } from './flowAnalyzer';
 import { AIService } from './aiService';
 import { ZerlyKeyManager, zerlyLog } from './zerlyKeyManager';
+import { ProviderKeyManager, Provider } from './providerKeyManager';
 
 const CACHE_KEY = 'zerly.cachedScanData';
 const CACHE_TIMESTAMP_KEY = 'zerly.cachedScanTimestamp';
@@ -19,8 +20,11 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
   private _pendingMessages: any[] = [];
   /** Disposable for the onKeyChanged subscription — cleaned up on dispose. */
   private _keyChangedDisposable: vscode.Disposable;
+  /** Disposable for the onConfigChanged subscription — cleaned up on dispose. */
+  private _configChangedDisposable: vscode.Disposable | null = null;
   /** How many key-change listeners are currently registered (always 1 after construction). */
   private _listenerCount = 0;
+  private _providerManager: ProviderKeyManager | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -48,6 +52,14 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
       this.postMessage({ command: 'apiKeySet', success: Boolean(key) });
     });
     this._listenerCount = 1;
+  }
+
+  /** Wire in the provider key manager after construction. */
+  setProviderManager(pm: ProviderKeyManager): void {
+    this._providerManager = pm;
+    this._configChangedDisposable = pm.onConfigChanged.event((cfg) => {
+      this.postMessage({ command: 'providerStatus', data: cfg });
+    });
   }
 
   /** Number of onKeyChanged listeners currently registered. */
@@ -86,6 +98,9 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
       this._view = undefined;
       zerlyLog('webview-disposed', 'Webview closed — aborting all in-flight requests');
       this._aiService.invalidateAll();
+      this._keyChangedDisposable.dispose();
+      this._configChangedDisposable?.dispose();
+      this._configChangedDisposable = null;
     });
 
     // Handle messages from webview
@@ -293,7 +308,9 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
       }
 
       case 'connectZerly': {
-        await vscode.env.openExternal(vscode.Uri.parse('https://zerly.tinobritty.me/connect'));
+        const extId = vscode.extensions.getExtension('zerly.zerly-ai')?.id ?? 'zerly.zerly-ai';
+        const connectUrl = `https://zerly.tinobritty.me/connect?autoConnect=1&extensionId=${extId}&setupProviders=1`;
+        await vscode.env.openExternal(vscode.Uri.parse(connectUrl));
         break;
       }
 
@@ -318,6 +335,48 @@ export class ZerlySidebarProvider implements vscode.WebviewViewProvider {
           command: 'apiStatus',
           data: { hasKey, isDefault: !hasKey },
         });
+        // Also send provider config if available
+        if (this._providerManager) {
+          this.postMessage({ command: 'providerStatus', data: this._providerManager.getConfig() });
+        }
+        break;
+      }
+
+      case 'getProviderStatus': {
+        if (this._providerManager) {
+          this.postMessage({ command: 'providerStatus', data: this._providerManager.getConfig() });
+        }
+        break;
+      }
+
+      case 'setProviderKey': {
+        if (!this._providerManager) break;
+        const { provider, key } = message as { provider: Provider; key: string };
+        const r = await this._providerManager.setKey(provider, key);
+        this.postMessage({ command: 'setProviderKeyResult', ok: r.ok, provider, error: r.error });
+        if (r.ok) {
+          this.postMessage({ command: 'providerStatus', data: this._providerManager.getConfig() });
+        }
+        break;
+      }
+
+      case 'removeProviderKey': {
+        if (!this._providerManager) break;
+        const { provider } = message as { provider: Provider };
+        await this._providerManager.removeKey(provider);
+        this.postMessage({ command: 'providerStatus', data: this._providerManager.getConfig() });
+        break;
+      }
+
+      case 'setRouteMode': {
+        if (!this._providerManager) break;
+        await this._providerManager.setConfig({ routeMode: message.routeMode });
+        this.postMessage({ command: 'providerStatus', data: this._providerManager.getConfig() });
+        break;
+      }
+
+      case 'setupProviders': {
+        vscode.commands.executeCommand('zerly.setupProviders');
         break;
       }
     }

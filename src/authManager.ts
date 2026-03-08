@@ -13,7 +13,7 @@ import { ZerlyKeyManager, zerlyLog } from './zerlyKeyManager';
 
 const BACKEND_URL =
   vscode.workspace.getConfiguration("zerly").get<string>("apiUrl") ??
-  "http://localhost:3000";
+  "https://zerly.tinobritty.me";
 
 const TOKEN_KEY = "zerly.authToken";
 const PLAN_KEY = "zerly.plan";
@@ -92,11 +92,19 @@ export class AuthManager implements vscode.UriHandler {
         zerlyLog('key-save-failed', result.error ?? 'unknown');
         return;
       }
+      const source = params.get('source') ?? '';
+      const mode = params.get('mode') ?? '';
+      const setupProviders = params.get('setupProviders') === '1';
+
       zerlyLog('key-saved', 'API key received and saved via deep-link', {
-        meta: { keyVersion: this._keyManager.keyVersion },
+        meta: { keyVersion: this._keyManager.keyVersion, source, mode, setupProviders },
       });
       vscode.window.showInformationMessage('Zerly: Account connected! AI features are now active. 🟣');
       // ZerlyKeyManager.onKeyChanged fires automatically — caches cleared, webview refreshed.
+      if (setupProviders) {
+        // Delay slightly so the welcome message renders first.
+        setTimeout(() => vscode.commands.executeCommand('zerly.setupProviders'), 500);
+      }
       return;
     }
 

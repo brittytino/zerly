@@ -2,15 +2,18 @@
  * Unit tests: AIService
  *
  * Tests:
- *  1. getApiKey() prefers ZerlyKeyManager over workspace config
+ *  1. getApiKey() returns keyManager key
  *  2. invalidateAll() aborts all tracked AbortControllers
  *  3. setKeyManager() wires onKeyChanged → invalidateAll
- *  4. Request freshness headers (Cache-Control, Pragma, X-Request-Id)
+ *  4. setProviderManager() wires onConfigChanged → invalidateAll
  *  5. Stale response suppression via keyVersion mismatch
+ *  6. Stale response suppression via configVersion mismatch
  */
 
 import { AIService } from '../aiService';
 import { ZerlyKeyManager } from '../zerlyKeyManager';
+import { ProviderKeyManager } from '../providerKeyManager';
+import { RequestRouter } from '../requestRouter';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -29,6 +32,22 @@ function makeContext(secretKey = '') {
   } as any;
 }
 
+function makeProviderContext() {
+  const secretsStore: Record<string, string> = {};
+  const globalStore: Record<string, unknown> = {};
+  return {
+    secrets: {
+      get: jest.fn(async (k: string) => secretsStore[k] ?? undefined),
+      store: jest.fn(async (k: string, v: string) => { secretsStore[k] = v; }),
+      delete: jest.fn(async (k: string) => { delete secretsStore[k]; }),
+    },
+    globalState: {
+      get: jest.fn((k: string) => globalStore[k]),
+      update: jest.fn(async (k: string, v: unknown) => { globalStore[k] = v; }),
+    },
+  } as any;
+}
+
 async function makeKeyManager(secretKey = '') {
   ZerlyKeyManager._resetForTests();
   const ctx = makeContext(secretKey);
@@ -37,63 +56,62 @@ async function makeKeyManager(secretKey = '') {
   return km;
 }
 
+async function makeProviderManager() {
+  ProviderKeyManager._resetForTests();
+  const pm = ProviderKeyManager.getInstance(makeProviderContext());
+  await pm.initialize();
+  return pm;
+}
+
+/** Makes a RequestRouter whose execute() resolves with given result after optional side-effect. */
+function makeRouter(
+  executeFn: (opts: any) => Promise<any> = async () => ({
+    content: 'mock response',
+    status: 200,
+    routeUsed: 'zerly',
+    modelUsed: 'zerly/zerlino-32b',
+    requestId: 'mock-req',
+  })
+): RequestRouter {
+  const router = new RequestRouter();
+  (router as any).execute = executeFn;
+  return router;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+afterEach(() => {
+  ZerlyKeyManager._resetForTests();
+  ProviderKeyManager._resetForTests();
+  jest.clearAllMocks();
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AIService.getApiKey()', () => {
-  beforeEach(() => {
-    ZerlyKeyManager._resetForTests();
-  });
-
-  test('returns empty string when no key and no workspace config', async () => {
-    // vscode mock returns empty config by default
+  test('returns empty string when keyManager has no key', async () => {
     const svc = new AIService();
     const km = await makeKeyManager(''); // no key stored
     svc.setKeyManager(km);
     expect(svc.getApiKey()).toBe('');
   });
 
-  test('prefers keyManager key over workspace config', async () => {
-    // workspace mock returns 'wk_fallback_key' from settings
-    const { workspace } = require('vscode');
-    workspace.getConfiguration.mockReturnValue({
-      get: (k: string) => (k === 'zerlyApiKey' ? 'wk_fallback_key_123' : undefined),
-      update: jest.fn(async () => {}),
-    });
-
+  test('returns the key from keyManager', async () => {
     const km = await makeKeyManager('sk_zerly_priority12');
     const svc = new AIService();
     svc.setKeyManager(km);
-
-    // Should read from keyManager, not config
     expect(svc.getApiKey()).toBe('sk_zerly_priority12');
-  });
-
-  test('falls back to workspace config when keyManager has no key', async () => {
-    const { workspace } = require('vscode');
-    workspace.getConfiguration.mockReturnValue({
-      get: (k: string) => (k === 'zerlyApiKey' ? 'cfg_fallback_key_abc' : undefined),
-      update: jest.fn(async () => {}),
-    });
-
-    const km = await makeKeyManager(''); // no SecretStorage key
-    const svc = new AIService();
-    svc.setKeyManager(km);
-
-    expect(svc.getApiKey()).toBe('cfg_fallback_key_abc');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AIService.invalidateAll()', () => {
-  beforeEach(() => ZerlyKeyManager._resetForTests());
-
   test('aborts all tracked controllers', async () => {
     const svc = new AIService();
     const km = await makeKeyManager('sk_zerly_invalidate12');
     svc.setKeyManager(km);
 
-    // Inject fake controllers via the private map (cast to any for test access)
     const ctrl1 = new AbortController();
     const ctrl2 = new AbortController();
     (svc as any)._taskControllers.set('task_a', ctrl1);
@@ -117,18 +135,14 @@ describe('AIService.invalidateAll()', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('AIService.setKeyManager() wires key change → invalidateAll', () => {
-  beforeEach(() => ZerlyKeyManager._resetForTests());
-
   test('invalidateAll called when key changes via setKey()', async () => {
     const km = await makeKeyManager('sk_zerly_existing12');
     const svc = new AIService();
     svc.setKeyManager(km);
 
-    // Inject a fake controller so we can detect abort
     const ctrl = new AbortController();
     (svc as any)._taskControllers.set('some_task', ctrl);
 
-    // Change the key — should trigger invalidateAll
     await km.setKey('sk_zerly_newkey5678');
     expect(ctrl.signal.aborted).toBe(true);
     expect((svc as any)._taskControllers.size).toBe(0);
@@ -149,85 +163,65 @@ describe('AIService.setKeyManager() wires key change → invalidateAll', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('AIService request freshness headers', () => {
-  beforeEach(() => {
-    ZerlyKeyManager._resetForTests();
-    jest.clearAllMocks();
-  });
-
-  test('each request carries Cache-Control: no-store', async () => {
-    const mockFetch = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
-    });
-    global.fetch = mockFetch as any;
-
-    const km = await makeKeyManager('sk_zerly_freshtest12');
+describe('AIService.setProviderManager() wires config change → invalidateAll', () => {
+  test('invalidateAll called when provider config changes', async () => {
+    const km = await makeKeyManager('sk_zerly_test123456');
+    const pm = await makeProviderManager();
     const svc = new AIService();
     svc.setKeyManager(km);
+    svc.setProviderManager(pm);
 
-    // Call a public method that triggers _call (use explainCode with minimal scanner data)
-    await svc.explainCode('const x = 1;', 'test.ts');
+    const ctrl = new AbortController();
+    (svc as any)._taskControllers.set('running_task', ctrl);
 
-    expect(mockFetch).toHaveBeenCalled();
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
-    expect((init.headers as Record<string, string>)['Cache-Control']).toBe('no-store');
-    expect((init.headers as Record<string, string>)['Pragma']).toBe('no-cache');
-  });
-
-  test('each request carries a unique X-Request-Id', async () => {
-    const capturedIds: string[] = [];
-    const mockFetch = jest.fn().mockImplementation((_url: string, init: RequestInit & { headers: Record<string, string> }) => {
-      capturedIds.push((init.headers as Record<string, string>)['X-Request-Id']);
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
-      });
-    });
-    global.fetch = mockFetch as any;
-
-    const km = await makeKeyManager('sk_zerly_freshtest12');
-    const svc = new AIService();
-    svc.setKeyManager(km);
-
-    await svc.explainCode('const a = 1;', 'test.ts');
-    await svc.explainCode('const b = 2;', 'test.ts');
-
-    expect(capturedIds.length).toBe(2);
-    expect(capturedIds[0]).toBeTruthy();
-    expect(capturedIds[1]).toBeTruthy();
-    expect(capturedIds[0]).not.toBe(capturedIds[1]);
+    await pm.setConfig({ routeMode: 'provider_override' });
+    expect(ctrl.signal.aborted).toBe(true);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('AIService stale response suppression', () => {
-  beforeEach(() => {
-    ZerlyKeyManager._resetForTests();
-    jest.clearAllMocks();
-  });
-
+describe('AIService stale response suppression — keyVersion', () => {
   test('discards response when keyVersion changes mid-request', async () => {
     const km = await makeKeyManager('sk_zerly_staletest12');
+    const pm = await makeProviderManager();
     const svc = new AIService();
     svc.setKeyManager(km);
+    svc.setProviderManager(pm);
 
-    // fetch will advance the key version DURING the request to simulate rotation
-    const mockFetch = jest.fn().mockImplementation(async () => {
-      // Rotate the key while "in flight"
+    // Router that rotates the key DURING execution to simulate key change mid-flight
+    const router = makeRouter(async () => {
       await km.setKey('sk_zerly_rotatedkey99');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ choices: [{ message: { content: 'should-be-suppressed' } }] }),
-      };
+      return { content: 'should-be-suppressed', status: 200, routeUsed: 'zerly', modelUsed: 'm', requestId: 'r' };
     });
-    global.fetch = mockFetch as any;
+    svc.setRequestRouter(router);
 
     const result = await svc.explainCode('someCode', 'test.ts');
-    expect(result).toContain('key rotation');
+    expect(result).toContain('configuration change');
+    expect(result).not.toContain('should-be-suppressed');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AIService stale response suppression — configVersion', () => {
+  test('discards response when providerConfig changes mid-request', async () => {
+    const km = await makeKeyManager('sk_zerly_configtest12');
+    const pm = await makeProviderManager();
+    const svc = new AIService();
+    svc.setKeyManager(km);
+    svc.setProviderManager(pm);
+
+    // Router that changes provider config DURING execution
+    const router = makeRouter(async () => {
+      await pm.setConfig({ routeMode: 'provider_override' });
+      return { content: 'stale', status: 200, routeUsed: 'zerly', modelUsed: 'm', requestId: 'r' };
+    });
+    svc.setRequestRouter(router);
+
+    const result = await svc.explainCode('code', 'test.ts');
+    expect(result).toContain('configuration change');
+    expect(result).not.toContain('stale');
+  });
+});
+

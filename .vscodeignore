@@ -1,5 +1,30 @@
 node_modules/
-dist/
 *.vsix
 .vscode-test/
 out/
+
+# Source files (compiled to dist/ — dist/ itself is included)
+src/
+webview/
+tsconfig*.json
+esbuild*.js
+jest.config.js
+
+# Source maps (not needed at runtime, reduces package size)
+dist/**/*.map
+
+# Test artifacts
+coverage/
+
+# Backend (separate service, not part of the extension)
+backend/
+
+# Dev/CI tooling
+.env
+.env.*
+*.log
+.gitignore
+package-lock.json
+
+# Duplicate/legacy assets
+assets/smp.png

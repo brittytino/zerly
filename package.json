@@ -113,6 +113,14 @@
       {
         "command": "zerly.diagnostics",
         "title": "Zerly: Open Connection Diagnostics"
+      },
+      {
+        "command": "zerly.setupProviders",
+        "title": "Zerly: Setup AI Providers"
+      },
+      {
+        "command": "zerly.pasteApiKey",
+        "title": "Zerly: Paste Zerly API Key"
       }
     ],
     "menus": {
@@ -130,24 +138,8 @@
         "zerly.zerlyApiKey": {
           "type": "string",
           "default": "",
-          "description": "Your Zerly API key for AI-powered analysis.",
-          "markdownDescription": "Your Zerly API key from [zerly.tinobritty.me](https://zerly.tinobritty.me). Required for all AI features."
-        },
-        "zerly.customModelApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Optional: API key for a custom model provider. When set, overrides the default Zerly model.",
-          "markdownDescription": "Optional: API key for your own model provider. When set, Zerly will use this instead of the default `zerly/zerlino-32b` model."
-        },
-        "zerly.customModel": {
-          "type": "string",
-          "default": "",
-          "description": "Custom model name to use when a Custom Model API Key is configured."
-        },
-        "zerly.customApiEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "Custom API endpoint. Only used when Custom Model API Key is set."
+          "description": "Your Zerly API key. Obtained automatically when you connect via 'Zerly: Connect Zerly Account'. You can also paste it directly with 'Zerly: Paste Zerly API Key'.",
+          "markdownDescription": "Your Zerly API key from [zerly.tinobritty.me](https://zerly.tinobritty.me). Obtained automatically when you connect your account."
         },
         "zerly.enableRiskScanner": {
           "type": "boolean",
@@ -158,6 +150,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the Architecture Map to generate visual dependency diagrams."
+        },
+        "zerly.apiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Advanced: Override the Zerly backend URL (for self-hosted deployments). Leave blank to use the default cloud backend."
         }
       }
     },
@@ -177,7 +174,8 @@
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@types/vscode": "^1.85.0",
-    "esbuild": "^0.20.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.3",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5.0.0"
@@ -185,10 +183,18 @@
   "dependencies": {
     "@vscode/codicons": "^0.0.44",
     "axios": "^1.13.6",
-    "mermaid": "^11.0.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"
   },
+  "license": "GPL-3.0-only",
+  "author": {
+    "name": "Tino Britty",
+    "url": "https://github.com/brittytino"
+  },
+  "bugs": {
+    "url": "https://github.com/brittytino/zerly/issues"
+  },
+  "homepage": "https://github.com/brittytino/zerly#readme",
   "repository": {
     "type": "git",
     "url": "https://github.com/brittytino/zerly"
